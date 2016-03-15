@@ -1,72 +1,94 @@
+
 //-------------------------------------------------------------------
+// Controlador Sous Vide
+// Originalmente criado por Bill Earl - para Adafruit Industries
 //
-// Sous Vide Controller
-// Bill Earl - for Adafruit Industries
-//
-// Based on the Arduino PID and PID AutoTune Libraries 
-// by Brett Beauregard
+// Traducão para português, adaptacão para LCD comum de 16x2, botões extras e cronômetro de tempo
+// por Guz Forster e Gustavo J. M. Forster - experimentoria.com.br
+// 
+// Usando as bibliotecas de PID e Autotune PID para Arduino por Brett Beauregard
 //------------------------------------------------------------------
 
-// PID Library
+// Bibliotecas PID
 #include <PID_v1.h>
 #include <PID_AutoTune_v0.h>
 
-// Libraries for the Adafruit RGB/LCD Shield
-#include <Wire.h>
-#include <Adafruit_MCP23017.h>
-#include <Adafruit_RGBLCDShield.h>
+// Biblioteca do LCD
+#include <LiquidCrystal.h>
 
-// Libraries for the DS18B20 Temperature Sensor
+// Bibliotecas para o sensor de temperatura a prova d'água DS18B20 (ou compatível)
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
-// So we can save and retrieve settings
+// Biblioteca EEPROM para que possamos guardar as últimas configuracões do controlador no Arduino
 #include <EEPROM.h>
 
 // ************************************************
-// Pin definitions
+// Definicões dos Pinos
 // ************************************************
 
-// Output Relay
-#define RelayPin 7
+// Relé
+#define RelayPin 8
 
-// One-Wire Temperature Sensor
-// (Use GPIO pins for power/ground to simplify the wiring)
-#define ONE_WIRE_BUS 2
-#define ONE_WIRE_PWR 3
-#define ONE_WIRE_GND 4
+// Pino do sensor de temperatura
+#define PIN_SENSOR_TEMP 9
+
+
+// Define todos os pinos de botões
+#define PIN_BTN_PARACIMA  A0
+#define PIN_BTN_PARABAIXO A1
+#define PIN_BTN_ESQUERDA  A2
+#define PIN_BTN_DIREITA   A3
+#define PIN_BTN_SHIFT     A4
+
+// matriz com todos os pinos dos botões do sistema
+byte btnPins[] =
+{
+      PIN_BTN_PARACIMA,
+      PIN_BTN_PARABAIXO,
+      PIN_BTN_ESQUERDA,
+      PIN_BTN_DIREITA,
+      PIN_BTN_SHIFT
+};
+
+byte BTN_DIREITA = 0;
+
+// inicializa o LCD com os números dos pinos
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
 
 // ************************************************
-// PID Variables and constants
+// Variáveis e constantes PID
 // ************************************************
 
-//Define Variables we'll be connecting to
-double Setpoint;
-double Input;
-double Output;
+// Definindo variáveis que iremos conectar
+double  Setpoint,	// variável que usuário irá definir o valor da temperatura desejada
+		Input, 		// variávei que recebe o valor de temperatura do sensor
+		Output;		// Guz: verificar como essa variável se conecta com a onTime
 
-volatile long onTime = 0;
+volatile long onTime = 0; // Guz: verificar para que serve essa variável
 
-// pid tuning parameters
-double Kp;
-double Ki;
-double Kd;
+// Variáveis de ajustes do PID
+double  Kp,
+		    Ki,
+		    Kd;
 
-// EEPROM addresses for persisted data
+// Enderecos da EEPROM para guardarmos os dados;
 const int SpAddress = 0;
 const int KpAddress = 8;
 const int KiAddress = 16;
 const int KdAddress = 24;
 
-//Specify the links and initial tuning parameters
+
+// Cria o objeto PID com aa referências de Input, Output e Setpoint (usando bitwise AND - &) além dos parâmetros iniciais (Kp, Ki, Kd)
 PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
 
-// 10 second Time Proportional Output window
+
+// Definindo variáveis para tempo proporcional de 10 segundos
 int WindowSize = 10000; 
 unsigned long windowStartTime;
 
 // ************************************************
-// Auto Tune Variables and constants
+// Variáveis e constantes do Auto Tune
 // ************************************************
 byte ATuneModeRemember=2;
 
@@ -74,146 +96,138 @@ double aTuneStep=500;
 double aTuneNoise=1;
 unsigned int aTuneLookBack=20;
 
-boolean tuning = false;
+bool tuning = false;
 
 PID_ATune aTune(&Input, &Output);
 
 // ************************************************
-// DiSplay Variables and constants
+// Mostrar variáveis e constantes
 // ************************************************
 
-Adafruit_RGBLCDShield lcd = Adafruit_RGBLCDShield();
-// These #defines make it easy to set the backlight color
-#define RED 0x1
-#define YELLOW 0x3
-#define GREEN 0x2
-#define TEAL 0x6
-#define BLUE 0x4
-#define VIOLET 0x5
-#define WHITE 0x7
+//#define PIN_BTN_SHIFT 1
 
-#define BUTTON_SHIFT BUTTON_SELECT
+unsigned long lastInput = 0; // último botão pressionado
 
-unsigned long lastInput = 0; // last button press
-
-byte degree[8] = // define the degree symbol 
-{ 
- B00110, 
- B01001, 
- B01001, 
- B00110, 
- B00000,
- B00000, 
- B00000, 
- B00000 
-}; 
-
-const int logInterval = 10000; // log every 10 seconds
+const int logInterval = 10000; // log a cada 10 segundos (para saída na Serial)
 long lastLogTime = 0;
 
 // ************************************************
-// States for state machine
+// Estados para as telas
 // ************************************************
-enum operatingState { OFF = 0, SETP, RUN, TUNE_P, TUNE_I, TUNE_D, AUTO};
+enum operatingState
+{
+	OFF = 0,
+	SETP,
+	RUN,
+	TUNE_P,
+	TUNE_I,
+	TUNE_D,
+	AUTO
+};
+
 operatingState opState = OFF;
 
 // ************************************************
-// Sensor Variables and constants
-// Data wire is plugged into port 2 on the Arduino
+// Variáveis e constantes do sensor
+// Fio de dados do sensor é ligado no pino 2 do Arduino (definido acima)
 
-// Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
-OneWire oneWire(ONE_WIRE_BUS);
+// Cria uma instância do objeto OneWire para comunicar com qualquer dispositivo OneWire (e não apenas CIs de temperatura da Maxim/Dallas)
+OneWire oneWire(PIN_SENSOR_TEMP);
 
-// Pass our oneWire reference to Dallas Temperature. 
+// Passa a referência oneWire criada para o objeto Dallas Temperature.
 DallasTemperature sensors(&oneWire);
 
-// arrays to hold device address
+// A array que guarda o endereco do sensor (definida na biblioteca Dallas Termperature)
 DeviceAddress tempSensor;
 
+
+byte lastButtonState = 0;
+
 // ************************************************
-// Setup and diSplay initial screen
+// Setup e exibe a tela principal
 // ************************************************
 void setup()
 {
    Serial.begin(9600);
+   Serial.println("teste");
+   // Modos de pino para os botões:
+   for (byte i=0; i < 5; i++)
+   {
+      pinMode(btnPins[i], INPUT);
+   }
+   
+   // Inicializa o controle do relé:
 
-   // Initialize Relay Control:
+   pinMode(RelayPin, OUTPUT);    // Modo de output (saída) para o relé
+   digitalWrite(RelayPin, LOW);  // Para ter certeza que está desligado ao iniciar
 
-   pinMode(RelayPin, OUTPUT);    // Output mode to drive relay
-   digitalWrite(RelayPin, LOW);  // make sure it is off to start
-
-   // Set up Ground & Power for the sensor from GPIO pins
-
-   pinMode(ONE_WIRE_GND, OUTPUT);
-   digitalWrite(ONE_WIRE_GND, LOW);
-
-   pinMode(ONE_WIRE_PWR, OUTPUT);
-   digitalWrite(ONE_WIRE_PWR, HIGH);
-
-   // Initialize LCD DiSplay 
+   // Inicializa o LCD
 
    lcd.begin(16, 2);
-   lcd.createChar(1, degree); // create degree symbol from the binary
    
-   lcd.setBacklight(VIOLET);
-   lcd.print(F("    Adafruit"));
+   lcd.print(F(" Experimentoria"));
    lcd.setCursor(0, 1);
-   lcd.print(F("   Sous Vide!"));
+   lcd.print(F("   Maker Chef"));
 
-   // Start up the DS18B20 One Wire Temperature Sensor
+   // Inicializa o sensor de temperatura
 
    sensors.begin();
-   if (!sensors.getAddress(tempSensor, 0)) 
+   if (!sensors.getAddress(tempSensor, 0)) // Verifica se o sensor existe / se está dando leitura
    {
       lcd.setCursor(0, 1);
-      lcd.print(F("Sensor Error"));
+      lcd.print(F("Erro no sensor!"));
    }
    sensors.setResolution(tempSensor, 12);
    sensors.setWaitForConversion(false);
 
-   delay(3000);  // Splash screen
+   delay(3000);  // Tela de abertura
 
-   // Initialize the PID and related variables
+   // Inicializa o PID e variáveis relacionadas
    LoadParameters();
    myPID.SetTunings(Kp,Ki,Kd);
 
    myPID.SetSampleTime(1000);
    myPID.SetOutputLimits(0, WindowSize);
 
-  // Run timer2 interrupt every 15 ms 
+  // Roda o interruptor do Timer 2 do Arduino a cada 15ms
   TCCR2A = 0;
   TCCR2B = 1<<CS22 | 1<<CS21 | 1<<CS20;
 
-  //Timer2 Overflow Interrupt Enable
+  // Habilita o overflow do interruptor do Timer 2 do Arduino
   TIMSK2 |= 1<<TOIE2;
 }
 
 // ************************************************
-// Timer Interrupt Handler
+// Funcão que lida com o interrutor do timer
 // ************************************************
 SIGNAL(TIMER2_OVF_vect) 
 {
   if (opState == OFF)
   {
-    digitalWrite(RelayPin, LOW);  // make sure relay is off
+    digitalWrite(RelayPin, LOW);  // ter a certeza que o relé está desligado
   }
   else
   {
-    DriveOutput();
+    DriveOutput(); // Se o estado/tela não for a OFF, executa saídas do relé
   }
 }
 
 // ************************************************
-// Main Control Loop
+// Loop principal do controle
 //
-// All state changes pass through here
+// Todas as mudancas de tela passam por aqui
 // ************************************************
 void loop()
 {
-   // wait for button release before changing state
-   while(ReadButtons() != 0) {}
+   
+   //while(ReadButtons() != 0) {} // espera o botão ser liberado para executar o resto do código no loop
+  
+  while (lastButtonState == LOW)
+  {
+    checaBotaoDireita();
+  }
 
-   lcd.clear();
+   lcd.clear(); //limpa o LCD
 
    switch (opState)
    {
@@ -239,74 +253,75 @@ void loop()
 }
 
 // ************************************************
-// Initial State - press RIGHT to enter setpoint
+// Estado/tela inicial - pressionando para a DIREITA
+// entra na configuracão da temperatura desejada
 // ************************************************
 void Off()
 {
    myPID.SetMode(MANUAL);
-   lcd.setBacklight(0);
-   digitalWrite(RelayPin, LOW);  // make sure it is off
-   lcd.print(F("    Adafruit"));
+   digitalWrite(RelayPin, LOW);  // ter a certeza de que o relé está desligado
+   lcd.print(F(" Experimentoria"));
    lcd.setCursor(0, 1);
-   lcd.print(F("   Sous Vide!"));
-   uint8_t buttons = 0;
+   lcd.print(F("   Maker Chef"));
+   byte botoes = 0;
    
-   while(!(buttons & (BUTTON_RIGHT)))
+   while(digitalRead(PIN_BTN_DIREITA) == LOW)
    {
-      buttons = ReadButtons();
+    Serial.println("Não estou saindo desse loop");
    }
-   // Prepare to transition to the RUN state
-   sensors.requestTemperatures(); // Start an asynchronous temperature reading
+   // Preparando para entrar no modo RUN (operacão)
+   sensors.requestTemperatures(); // Inicia a leitura da temperatura
 
-   //turn the PID on
+   //liga o PID
    myPID.SetMode(AUTOMATIC);
    windowStartTime = millis();
-   opState = RUN; // start control
+   opState = RUN; // comeca a execucão
 }
 
 // ************************************************
-// Setpoint Entry State
-// UP/DOWN to change setpoint
-// RIGHT for tuning parameters
-// LEFT for OFF
-// SHIFT for 10x tuning
+// Estado / tela do Setpoint
+// PRA CIMA/PRA BAIXO muda os valores do setpoint
+// PRA DIREITA muda para tela/estado de ajustar parâmetros PID
+// PRA ESQUERDA muda para tela/estado de OFF (desliga o PID)
+// BOTÃO SHIFT junto com PRA CIMA ou PRA BAIXO para o ajuste ser multiplicado por 10
 // ************************************************
 void Tune_Sp()
-{
-   lcd.setBacklight(TEAL);
-   lcd.print(F("Set Temperature:"));
-   uint8_t buttons = 0;
+{  
+   lcd.print(F("Temp. desejada:"));
+   byte buttons = 0;
    while(true)
    {
-      buttons = ReadButtons();
+      //buttons = ReadButtons();
+      lastButton();
 
       float increment = 0.1;
-      if (buttons & BUTTON_SHIFT)
+      if (digitalRead(PIN_BTN_SHIFT) == HIGH)
       {
+        Serial.println("estou considerando SHIFT como HIGH");
         increment *= 10;
       }
-      if (buttons & BUTTON_LEFT)
+      if (digitalRead(PIN_BTN_ESQUERDA) == HIGH)
       {
-         opState = RUN;
+         opState = RUN; // volta para a tela de execucão
          return;
       }
-      if (buttons & BUTTON_RIGHT)
+      if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
-         opState = TUNE_P;
+         opState = TUNE_P; // vai para a tela de ajuste do P(id)
          return;
       }
-      if (buttons & BUTTON_UP)
+      if (digitalRead(PIN_BTN_PARACIMA) == HIGH)
       {
          Setpoint += increment;
          delay(200);
       }
-      if (buttons & BUTTON_DOWN)
+      if (digitalRead(PIN_BTN_PARABAIXO) == HIGH)
       {
          Setpoint -= increment;
          delay(200);
       }
     
-      if ((millis() - lastInput) > 3000)  // return to RUN after 3 seconds idle
+      if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
       {
          opState = RUN;
          return;
@@ -319,48 +334,47 @@ void Tune_Sp()
 }
 
 // ************************************************
-// Proportional Tuning State
-// UP/DOWN to change Kp
-// RIGHT for Ki
-// LEFT for setpoint
-// SHIFT for 10x tuning
+// Tela / estado de ajuste do Kp - P(id)
+// PRA CIMA/PRA BAIXO mudam os valores
+// PRA DIREITA vai para a tela de ajuste do Ki - p(I)d
+// PRA ESQUERDA vai para a tela / estado de ajuste do setPoin (temperatura)
+// BOTÃO SHIFT junto com PRA CIMA ou PRA BAIXO para o ajuste ser multiplicado por 10
 // ************************************************
 void TuneP()
 {
-   lcd.setBacklight(TEAL);
-   lcd.print(F("Set Kp"));
+   lcd.print(F("Ajuste o Kp:"));
 
-   uint8_t buttons = 0;
+   //byte buttons = 0;
    while(true)
    {
-      buttons = ReadButtons();
+      //buttons = ReadButtons();
 
       float increment = 1.0;
-      if (buttons & BUTTON_SHIFT)
+      if (digitalRead(PIN_BTN_SHIFT) == HIGH)
       {
         increment *= 10;
       }
-      if (buttons & BUTTON_LEFT)
+      if (digitalRead(PIN_BTN_ESQUERDA) == HIGH)
       {
          opState = SETP;
          return;
       }
-      if (buttons & BUTTON_RIGHT)
+      if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
          opState = TUNE_I;
          return;
       }
-      if (buttons & BUTTON_UP)
+      if (digitalRead(PIN_BTN_PARACIMA) == HIGH)
       {
          Kp += increment;
          delay(200);
       }
-      if (buttons & BUTTON_DOWN)
+      if (digitalRead(PIN_BTN_PARABAIXO) == HIGH)
       {
          Kp -= increment;
          delay(200);
       }
-      if ((millis() - lastInput) > 3000)  // return to RUN after 3 seconds idle
+      if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
       {
          opState = RUN;
          return;
@@ -373,48 +387,47 @@ void TuneP()
 }
 
 // ************************************************
-// Integral Tuning State
-// UP/DOWN to change Ki
-// RIGHT for Kd
-// LEFT for Kp
-// SHIFT for 10x tuning
+// Tela / estado de ajuste do Ki p(I)d
+// PRA CIMA/PRA BAIXO mudam os valores
+// PRA DIREITA vai para a tela de ajuste do Kd - pi(D)
+// PRA ESQUERDA vai para a tela de ajuste do Kp - (P)id
+// BOTÃO SHIFT junto com PRA CIMA ou PRA BAIXO para o ajuste ser multiplicado por 10
 // ************************************************
 void TuneI()
 {
-   lcd.setBacklight(TEAL);
-   lcd.print(F("Set Ki"));
+   lcd.print(F("Ajuste o Ki"));
 
-   uint8_t buttons = 0;
+   byte buttons = 0;
    while(true)
    {
-      buttons = ReadButtons();
+      //buttons = ReadButtons();
 
       float increment = 0.01;
-      if (buttons & BUTTON_SHIFT)
+      if (digitalRead(PIN_BTN_SHIFT) == HIGH)
       {
         increment *= 10;
       }
-      if (buttons & BUTTON_LEFT)
+      if (digitalRead(PIN_BTN_ESQUERDA) == HIGH)
       {
          opState = TUNE_P;
          return;
       }
-      if (buttons & BUTTON_RIGHT)
+      if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
          opState = TUNE_D;
          return;
       }
-      if (buttons & BUTTON_UP)
+      if (digitalRead(PIN_BTN_PARACIMA) == HIGH)
       {
          Ki += increment;
          delay(200);
       }
-      if (buttons & BUTTON_DOWN)
+      if (digitalRead(PIN_BTN_PARABAIXO) == HIGH)
       {
          Ki -= increment;
          delay(200);
       }
-      if ((millis() - lastInput) > 3000)  // return to RUN after 3 seconds idle
+      if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
       {
          opState = RUN;
          return;
@@ -427,47 +440,46 @@ void TuneI()
 }
 
 // ************************************************
-// Derivative Tuning State
-// UP/DOWN to change Kd
-// RIGHT for setpoint
-// LEFT for Ki
-// SHIFT for 10x tuning
+// Tela / estado de ajuste do Kd - pi(D)
+// PRA CIMA/PRA BAIXO mudam os valores
+// PRA DIREITA vai para a tela de ajuste do setPoint (temperatura)
+// PRA ESQUERDA vai para a tela de ajuste do Ki - p(I)d
+// BOTÃO SHIFT junto com PRA CIMA ou PRA BAIXO para o ajuste ser multiplicado por 10
 // ************************************************
 void TuneD()
 {
-   lcd.setBacklight(TEAL);
-   lcd.print(F("Set Kd"));
+   lcd.print(F("Ajuste o Kd:"));
 
-   uint8_t buttons = 0;
+   //byte buttons = 0;
    while(true)
    {
-      buttons = ReadButtons();
+      //buttons = ReadButtons();
       float increment = 0.01;
-      if (buttons & BUTTON_SHIFT)
+      if (digitalRead(PIN_BTN_SHIFT) == HIGH)
       {
         increment *= 10;
       }
-      if (buttons & BUTTON_LEFT)
+      if (digitalRead(PIN_BTN_ESQUERDA) == HIGH)
       {
          opState = TUNE_I;
          return;
       }
-      if (buttons & BUTTON_RIGHT)
+      if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
          opState = RUN;
          return;
       }
-      if (buttons & BUTTON_UP)
+      if (digitalRead(PIN_BTN_PARACIMA) == HIGH)
       {
          Kd += increment;
          delay(200);
       }
-      if (buttons & BUTTON_DOWN)
+      if (digitalRead(PIN_BTN_PARABAIXO) == HIGH)
       {
          Kd -= increment;
          delay(200);
       }
-      if ((millis() - lastInput) > 3000)  // return to RUN after 3 seconds idle
+      if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
       {
          opState = RUN;
          return;
@@ -480,40 +492,38 @@ void TuneD()
 }
 
 // ************************************************
-// PID COntrol State
-// SHIFT and RIGHT for autotune
-// RIGHT - Setpoint
-// LEFT - OFF
+// Tela de controle do PID
+// BOTÃO SHIFT junto com DIREITA para acionar o Autotune
+// PRA DIREITA - ajuste do Setpoint (temperatura)
+// PRA ESQUERDA - tela/estado de OFF (desliga o PID)
 // ************************************************
 void Run()
-{
-   // set up the LCD's number of rows and columns: 
+{   
    lcd.print(F("Sp: "));
    lcd.print(Setpoint);
-   lcd.write(1);
-   lcd.print(F("C : "));
+   lcd.write(223); // imprime o caractere "º" (graus)
+   lcd.print(F("C"));
 
-   SaveParameters();
-   myPID.SetTunings(Kp,Ki,Kd);
+   SaveParameters(); // funcão de salvar os parâmetros atuais na EEPROM
+   myPID.SetTunings(Kp,Ki,Kd); // estabelece os valores iniciais do PID
 
-   uint8_t buttons = 0;
+   byte buttons = 0;
    while(true)
    {
-      setBacklight();  // set backlight based on state
-
-      buttons = ReadButtons();
-      if ((buttons & BUTTON_SHIFT) 
-         && (buttons & BUTTON_RIGHT) 
-         && (abs(Input - Setpoint) < 0.5))  // Should be at steady-state
+      //buttons = ReadButtons();
+      lastButton();
+      if ((digitalRead(PIN_BTN_SHIFT) == HIGH) 
+         && (digitalRead(PIN_BTN_DIREITA) == HIGH) 
+         && (abs(Input - Setpoint) < 0.5))  // só inicia o Autotune se a temperatura estiver estável dentro do valor estabelecido pelo usuário
       {
          StartAutoTune();
       }
-      else if (buttons & BUTTON_RIGHT)
+      else if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
         opState = SETP;
         return;
       }
-      else if (buttons & BUTTON_LEFT)
+      else if (digitalRead(PIN_BTN_ESQUERDA) == HIGH)
       {
         opState = OFF;
         return;
@@ -523,13 +533,11 @@ void Run()
       
       lcd.setCursor(0,1);
       lcd.print(Input);
-      lcd.write(1);
-      lcd.print(F("C : "));
+      lcd.write(223);
+      lcd.print(F("C "));
       
       float pct = map(Output, 0, WindowSize, 0, 1000);
-      lcd.setCursor(10,1);
-      lcd.print(F("      "));
-      lcd.setCursor(10,1);
+      lcd.setCursor(9,1);
       lcd.print(pct/10);
       //lcd.print(Output);
       lcd.print("%");
@@ -544,7 +552,7 @@ void Run()
         lcd.print(" ");
       }
       
-      // periodically log to serial port in csv format
+      // periodicamente imprime valores pela porta serial em formato CSV
       if (millis() - lastLogTime > logInterval)  
       {
         Serial.print(Input);
@@ -557,43 +565,44 @@ void Run()
 }
 
 // ************************************************
-// Execute the control loop
+// Executa o loop de controle do PID
 // ************************************************
 void DoControl()
 {
-  // Read the input:
-  if (sensors.isConversionAvailable(0))
+  // Ler o input:
+  if (sensors.isConversionAvailable(0)) // verifica se recebeu alguma mudanca de temperatura no sensor
   {
-    Input = sensors.getTempC(tempSensor);
-    sensors.requestTemperatures(); // prime the pump for the next one - but don't wait
+    Input = sensors.getTempC(tempSensor); // adquire a temperatura em ºC
+    sensors.requestTemperatures(); // inicializa a funcão para converter o valor digital em temperatura
   }
   
-  if (tuning) // run the auto-tuner
+  if (tuning) // roda o auto-tuner
   {
-     if (aTune.Runtime()) // returns 'true' when done
+     if (aTune.Runtime()) // retorna "true" quando finalizado
      {
-        FinishAutoTune();
+        FinishAutoTune(); // finaliza o auto-tune
      }
   }
-  else // Execute control algorithm
+  else // Executa o algoritmo de controle PID
   {
      myPID.Compute();
   }
   
-  // Time Proportional relay state is updated regularly via timer interrupt.
+  // O estado proporcional de tempo do relé é atualizado regularmente pelo interruptor do Timer 2
   onTime = Output; 
 }
 
 // ************************************************
-// Called by ISR every 15ms to drive the output
+// Chamado pelo ISR a cada 15ms para ativar a saída
+// no relé
 // ************************************************
 void DriveOutput()
 {  
   long now = millis();
-  // Set the output
-  // "on time" is proportional to the PID output
+  // Determina a saída
+  // "on time" é proporcional à saída do PID
   if(now - windowStartTime>WindowSize)
-  { //time to shift the Relay Window
+  { //hora de mudar o estado do relé
      windowStartTime += WindowSize;
   }
   if((onTime > 100) && (onTime > (now - windowStartTime)))
@@ -607,38 +616,15 @@ void DriveOutput()
 }
 
 // ************************************************
-// Set Backlight based on the state of control
-// ************************************************
-void setBacklight()
-{
-   if (tuning)
-   {
-      lcd.setBacklight(VIOLET); // Tuning Mode
-   }
-   else if (abs(Input - Setpoint) > 1.0)  
-   {
-      lcd.setBacklight(RED);  // High Alarm - off by more than 1 degree
-   }
-   else if (abs(Input - Setpoint) > 0.2)  
-   {
-      lcd.setBacklight(YELLOW);  // Low Alarm - off by more than 0.2 degrees
-   }
-   else
-   {
-      lcd.setBacklight(WHITE);  // We're on target!
-   }
-}
-
-// ************************************************
-// Start the Auto-Tuning cycle
+// Inicia o ciclo do Auto-Tune
 // ************************************************
 
 void StartAutoTune()
 {
-   // REmember the mode we were in
+   // Lembra o modo anterior
    ATuneModeRemember = myPID.GetMode();
 
-   // set up the auto-tune parameters
+   // ajusta os parâmetros do auto-tune
    aTune.SetNoiseBand(aTuneNoise);
    aTune.SetOutputStep(aTuneStep);
    aTune.SetLookbackSec((int)aTuneLookBack);
@@ -646,40 +632,68 @@ void StartAutoTune()
 }
 
 // ************************************************
-// Return to normal control
+// Retorna para o controle normal
 // ************************************************
 void FinishAutoTune()
 {
    tuning = false;
 
-   // Extract the auto-tune calculated parameters
+   // Extrai os parâmetros calculados do auto-tune
    Kp = aTune.GetKp();
    Ki = aTune.GetKi();
    Kd = aTune.GetKd();
 
-   // Re-tune the PID and revert to normal control mode
+   // Ajusta novamente os valores do PID e retorna para o controle normal
    myPID.SetTunings(Kp,Ki,Kd);
    myPID.SetMode(ATuneModeRemember);
    
-   // Persist any changed parameters to EEPROM
+   // Salva qualquer parâmetro modificado na EEPROM
    SaveParameters();
 }
 
 // ************************************************
-// Check buttons and time-stamp the last press
+// Verifica botões pressionaos e marca o tempo desde
+// o útlimo botão pressionado
 // ************************************************
-uint8_t ReadButtons()
+
+void lastButton()
 {
-  uint8_t buttons = lcd.readButtons();
+  lastInput = millis();
+}
+
+/*byte ReadButtons()
+{
+  byte buttons = botaoApertado();
   if (buttons != 0)
   {
     lastInput = millis();
   }
   return buttons;
+}*/
+
+void checaBotaoDireita()
+{
+  lastButtonState = digitalRead(PIN_BTN_DIREITA);
+  if(lastButtonState == HIGH)
+  {
+    delay(100);
+    break;
+  }
 }
+/*byte botaoApertado()
+{
+  byte botao[] = {};
+  byte btn = 0;
+
+  for (byte i=0; i<5; i++) {
+    botao[i] = digitalRead(btnPins[i]);
+    btn = botao[i];
+  }
+  return btn;
+}*/
 
 // ************************************************
-// Save any parameter changes to EEPROM
+// Salva quaisquer parâmetros modificados na EEPROM
 // ************************************************
 void SaveParameters()
 {
@@ -702,17 +716,17 @@ void SaveParameters()
 }
 
 // ************************************************
-// Load parameters from EEPROM
+// Carrega parâmetros da EEPROM
 // ************************************************
 void LoadParameters()
 {
-  // Load from EEPROM
+  // carrega da EEPROM
    Setpoint = EEPROM_readDouble(SpAddress);
    Kp = EEPROM_readDouble(KpAddress);
    Ki = EEPROM_readDouble(KiAddress);
    Kd = EEPROM_readDouble(KdAddress);
    
-   // Use defaults if EEPROM values are invalid
+   // Usa esses valores padrões caso os valores da EEPROM sejam inválidos/inexistentes
    if (isnan(Setpoint))
    {
      Setpoint = 60;
@@ -733,7 +747,7 @@ void LoadParameters()
 
 
 // ************************************************
-// Write floating point values to EEPROM
+// Escreve valores de ponto fluante na EEPROM
 // ************************************************
 void EEPROM_writeDouble(int address, double value)
 {
@@ -745,7 +759,7 @@ void EEPROM_writeDouble(int address, double value)
 }
 
 // ************************************************
-// Read floating point values from EEPROM
+// Lê valores de ponto fluante da EEPROM
 // ************************************************
 double EEPROM_readDouble(int address)
 {
