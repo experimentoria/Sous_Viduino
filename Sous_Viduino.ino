@@ -42,16 +42,7 @@
 #define PIN_BTN_SHIFT     A4
 
 // matriz com todos os pinos dos botões do sistema
-byte btnPins[] =
-{
-      PIN_BTN_PARACIMA,
-      PIN_BTN_PARABAIXO,
-      PIN_BTN_ESQUERDA,
-      PIN_BTN_DIREITA,
-      PIN_BTN_SHIFT
-};
-
-byte BTN_DIREITA = 0;
+byte button_pins[] = {PIN_BTN_PARACIMA,PIN_BTN_PARABAIXO,PIN_BTN_ESQUERDA,PIN_BTN_DIREITA,PIN_BTN_SHIFT};
 
 // inicializa o LCD com os números dos pinos
 LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
@@ -62,8 +53,8 @@ LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
 
 // Definindo variáveis que iremos conectar
 double  Setpoint,	// variável que usuário irá definir o valor da temperatura desejada
-		Input, 		// variávei que recebe o valor de temperatura do sensor
-		Output;		// Guz: verificar como essa variável se conecta com a onTime
+		    Input, 		// variávei que recebe o valor de temperatura do sensor
+		    Output;		// Guz: verificar como essa variável se conecta com a onTime
 
 volatile long onTime = 0; // Guz: verificar para que serve essa variável
 
@@ -140,8 +131,15 @@ DallasTemperature sensors(&oneWire);
 // A array que guarda o endereco do sensor (definida na biblioteca Dallas Termperature)
 DeviceAddress tempSensor;
 
+byte buttonState_DIR = digitalRead(PIN_BTN_DIREITA);
+byte buttonState_ESQ = digitalRead(PIN_BTN_ESQUERDA);
+byte buttonState_CIM = digitalRead(PIN_BTN_PARACIMA);
+byte buttonState_BAI = digitalRead(PIN_BTN_PARABAIXO);
+byte buttonState_SHI = digitalRead(PIN_BTN_SHIFT);
 
-byte lastButtonState = 0;
+byte botoes[]= {buttonState_DIR, buttonState_ESQ, buttonState_CIM, buttonState_BAI, buttonState_SHI};
+
+int lastButtonState = 0;
 
 // ************************************************
 // Setup e exibe a tela principal
@@ -153,7 +151,7 @@ void setup()
    // Modos de pino para os botões:
    for (byte i=0; i < 5; i++)
    {
-      pinMode(btnPins[i], INPUT);
+      pinMode(button_pins[i], INPUT);
    }
    
    // Inicializa o controle do relé:
@@ -218,38 +216,41 @@ SIGNAL(TIMER2_OVF_vect)
 // Todas as mudancas de tela passam por aqui
 // ************************************************
 void loop()
-{
-   
-   //while(ReadButtons() != 0) {} // espera o botão ser liberado para executar o resto do código no loop
-  
-  while (lastButtonState == LOW)
-  {
-    checaBotaoDireita();
-  }
+{   
+      for (byte i=0;i<5;i++)
+      {
+          if (botoes[i] != lastButtonState)
+          {
+              if (botoes[i] == LOW) break;
+          }
+          lastButtonState = botoes[i];
+      }
+      
+      lcd.clear(); //limpa o LCD
 
-   lcd.clear(); //limpa o LCD
+      Serial.print(opState);
 
-   switch (opState)
-   {
-   case OFF:
-      Off();
-      break;
-   case SETP:
-      Tune_Sp();
-      break;
-    case RUN:
-      Run();
-      break;
-   case TUNE_P:
-      TuneP();
-      break;
-   case TUNE_I:
-      TuneI();
-      break;
-   case TUNE_D:
-      TuneD();
-      break;
-   }
+       switch (opState)
+       {
+       case OFF:
+          Off();
+          break;
+       case SETP:
+          Tune_Sp();
+          break;
+        case RUN:
+          Run();
+          break;
+       case TUNE_P:
+          TuneP();
+          break;
+       case TUNE_I:
+          TuneI();
+          break;
+       case TUNE_D:
+          TuneD();
+          break;
+       }  
 }
 
 // ************************************************
@@ -258,24 +259,23 @@ void loop()
 // ************************************************
 void Off()
 {
-   myPID.SetMode(MANUAL);
-   digitalWrite(RelayPin, LOW);  // ter a certeza de que o relé está desligado
-   lcd.print(F(" Experimentoria"));
-   lcd.setCursor(0, 1);
-   lcd.print(F("   Maker Chef"));
-   byte botoes = 0;
-   
-   while(digitalRead(PIN_BTN_DIREITA) == LOW)
-   {
-    Serial.println("Não estou saindo desse loop");
-   }
-   // Preparando para entrar no modo RUN (operacão)
-   sensors.requestTemperatures(); // Inicia a leitura da temperatura
+  myPID.SetMode(MANUAL);
+  digitalWrite(RelayPin, LOW);  // ter a certeza de que o relé está desligado
+  lcd.print(F(" Experimentoria"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("   Maker Chef"));
+  uint8_t buttons = 0;
 
-   //liga o PID
-   myPID.SetMode(AUTOMATIC);
-   windowStartTime = millis();
-   opState = RUN; // comeca a execucão
+  if (digitalRead(PIN_BTN_DIREITA) == HIGH)
+  {
+       // Preparando para entrar no modo RUN (operacão)
+       sensors.requestTemperatures(); // Inicia a leitura da temperatura
+
+       //liga o PID
+       myPID.SetMode(AUTOMATIC);
+       windowStartTime = millis();
+       opState = RUN; // comeca a execucão
+   }
 }
 
 // ************************************************
@@ -288,16 +288,14 @@ void Off()
 void Tune_Sp()
 {  
    lcd.print(F("Temp. desejada:"));
-   byte buttons = 0;
+   uint8_t buttons = 0;
    while(true)
    {
       //buttons = ReadButtons();
-      lastButton();
 
       float increment = 0.1;
       if (digitalRead(PIN_BTN_SHIFT) == HIGH)
       {
-        Serial.println("estou considerando SHIFT como HIGH");
         increment *= 10;
       }
       if (digitalRead(PIN_BTN_ESQUERDA) == HIGH)
@@ -344,10 +342,10 @@ void TuneP()
 {
    lcd.print(F("Ajuste o Kp:"));
 
-   //byte buttons = 0;
+   uint8_t buttons = 0;
    while(true)
    {
-      //buttons = ReadButtons();
+      buttons = ReadButtons();
 
       float increment = 1.0;
       if (digitalRead(PIN_BTN_SHIFT) == HIGH)
@@ -397,10 +395,10 @@ void TuneI()
 {
    lcd.print(F("Ajuste o Ki"));
 
-   byte buttons = 0;
+   uint8_t buttons = 0;
    while(true)
    {
-      //buttons = ReadButtons();
+      buttons = ReadButtons();
 
       float increment = 0.01;
       if (digitalRead(PIN_BTN_SHIFT) == HIGH)
@@ -450,10 +448,10 @@ void TuneD()
 {
    lcd.print(F("Ajuste o Kd:"));
 
-   //byte buttons = 0;
+   uint8_t buttons = 0;
    while(true)
    {
-      //buttons = ReadButtons();
+      buttons = ReadButtons();
       float increment = 0.01;
       if (digitalRead(PIN_BTN_SHIFT) == HIGH)
       {
@@ -507,11 +505,10 @@ void Run()
    SaveParameters(); // funcão de salvar os parâmetros atuais na EEPROM
    myPID.SetTunings(Kp,Ki,Kd); // estabelece os valores iniciais do PID
 
-   byte buttons = 0;
+   //uint8_t buttons = 0;
    while(true)
    {
       //buttons = ReadButtons();
-      lastButton();
       if ((digitalRead(PIN_BTN_SHIFT) == HIGH) 
          && (digitalRead(PIN_BTN_DIREITA) == HIGH) 
          && (abs(Input - Setpoint) < 0.5))  // só inicia o Autotune se a temperatura estiver estável dentro do valor estabelecido pelo usuário
@@ -656,41 +653,27 @@ void FinishAutoTune()
 // o útlimo botão pressionado
 // ************************************************
 
-void lastButton()
-{
-  lastInput = millis();
-}
 
-/*byte ReadButtons()
+int ReadButtons()
 {
-  byte buttons = botaoApertado();
+  /*int buttons = botaoApertado();
   if (buttons != 0)
   {
     lastInput = millis();
   }
-  return buttons;
-}*/
+  Serial.println(buttons);
+  return buttons;*/
+}
 
-void checaBotaoDireita()
+int botaoApertado()
 {
-  lastButtonState = digitalRead(PIN_BTN_DIREITA);
-  if(lastButtonState == HIGH)
-  {
-    delay(100);
-    break;
+  int reply;
+
+  for (uint8_t i=0; i<5; i++) {
+    reply = digitalRead(button_pins[i]);
   }
 }
-/*byte botaoApertado()
-{
-  byte botao[] = {};
-  byte btn = 0;
 
-  for (byte i=0; i<5; i++) {
-    botao[i] = digitalRead(btnPins[i]);
-    btn = botao[i];
-  }
-  return btn;
-}*/
 
 // ************************************************
 // Salva quaisquer parâmetros modificados na EEPROM
