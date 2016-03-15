@@ -656,13 +656,13 @@ void FinishAutoTune()
 
 int ReadButtons()
 {
-  /*int buttons = botaoApertado();
+  int buttons = botaoApertado();
   if (buttons != 0)
   {
     lastInput = millis();
   }
   Serial.println(buttons);
-  return buttons;*/
+  return buttons;
 }
 
 int botaoApertado()
@@ -672,6 +672,7 @@ int botaoApertado()
   for (uint8_t i=0; i<5; i++) {
     reply = digitalRead(button_pins[i]);
   }
+  return reply;
 }
 
 
