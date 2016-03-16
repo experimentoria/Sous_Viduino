@@ -4,7 +4,7 @@
 // Originalmente criado por Bill Earl - para Adafruit Industries
 //
 // Traducão para português, adaptacão para LCD comum de 16x2, botões extras e cronômetro de tempo
-// por Guz Forster e Gustavo J. M. Forster - experimentoria.com.br
+// por Guz Forster, Leonel Braz e Gustavo J. M. Forster - experimentoria.com.br
 // 
 // Usando as bibliotecas de PID e Autotune PID para Arduino por Brett Beauregard
 //------------------------------------------------------------------
@@ -43,6 +43,11 @@
 
 // matriz com todos os pinos dos botões do sistema
 byte button_pins[] = {PIN_BTN_PARACIMA,PIN_BTN_PARABAIXO,PIN_BTN_ESQUERDA,PIN_BTN_DIREITA,PIN_BTN_SHIFT};
+
+byte old_estadoBotao = 0;
+byte estadoBotao = 0;
+
+byte pinoBotaoPressionado=0;
 
 // inicializa o LCD com os números dos pinos
 LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
@@ -108,13 +113,26 @@ long lastLogTime = 0;
 enum operatingState
 {
 	OFF = 0,
-	SETP,
 	RUN,
+  SETP,
 	TUNE_P,
 	TUNE_I,
 	TUNE_D,
 	AUTO
 };
+
+byte arrOperatingState[]=
+{
+  OFF,
+  RUN,
+  SETP,
+  TUNE_P,
+  TUNE_I,
+  TUNE_D,
+  AUTO
+};
+
+byte stateIndex = 0;
 
 operatingState opState = OFF;
 
@@ -139,15 +157,13 @@ byte buttonState_SHI = digitalRead(PIN_BTN_SHIFT);
 
 byte botoes[]= {buttonState_DIR, buttonState_ESQ, buttonState_CIM, buttonState_BAI, buttonState_SHI};
 
-int lastButtonState = 0;
-
 // ************************************************
 // Setup e exibe a tela principal
 // ************************************************
 void setup()
 {
    Serial.begin(9600);
-   Serial.println("teste");
+   // Serial.println("teste");
    // Modos de pino para os botões:
    for (byte i=0; i < 5; i++)
    {
@@ -217,20 +233,13 @@ SIGNAL(TIMER2_OVF_vect)
 // ************************************************
 void loop()
 {   
-      for (byte i=0;i<5;i++)
-      {
-          if (botoes[i] != lastButtonState)
-          {
-              if (botoes[i] == LOW) break;
-          }
-          lastButtonState = botoes[i];
-      }
-      
+      //faca algo somente quando soltar o botao
+      while(checaBotoes()!=0) {};
+
       lcd.clear(); //limpa o LCD
 
-      Serial.print(opState);
-
-       switch (opState)
+      //atualiza
+      switch (arrOperatingState[stateIndex])
        {
        case OFF:
           Off();
@@ -250,7 +259,27 @@ void loop()
        case TUNE_D:
           TuneD();
           break;
-       }  
+       } 
+
+}
+
+byte checaBotoes(){
+  for (byte i=0;i<5;i++)
+  {
+    estadoBotao = digitalRead(button_pins[i]);
+    pinoBotaoPressionado = button_pins[i];
+    if(estadoBotao==1) break;
+  }
+
+  return estadoBotao;
+}
+
+void gotoNext(){
+  stateIndex = (stateIndex==5) ? 0 : stateIndex+1;
+}
+
+void gotoPrev(){
+  stateIndex = (stateIndex==0) ? 5 : stateIndex-1;
 }
 
 // ************************************************
@@ -264,7 +293,7 @@ void Off()
   lcd.print(F(" Experimentoria"));
   lcd.setCursor(0, 1);
   lcd.print(F("   Maker Chef"));
-  uint8_t buttons = 0;
+  old_estadoBotao = 0;
 
   if (digitalRead(PIN_BTN_DIREITA) == HIGH)
   {
@@ -274,7 +303,8 @@ void Off()
        //liga o PID
        myPID.SetMode(AUTOMATIC);
        windowStartTime = millis();
-       opState = RUN; // comeca a execucão
+
+       gotoNext();
    }
 }
 
@@ -288,10 +318,9 @@ void Off()
 void Tune_Sp()
 {  
    lcd.print(F("Temp. desejada:"));
-   uint8_t buttons = 0;
+   old_estadoBotao = 0;
    while(true)
    {
-      //buttons = ReadButtons();
 
       float increment = 0.1;
       if (digitalRead(PIN_BTN_SHIFT) == HIGH)
@@ -300,12 +329,12 @@ void Tune_Sp()
       }
       if (digitalRead(PIN_BTN_ESQUERDA) == HIGH)
       {
-         opState = RUN; // volta para a tela de execucão
+         gotoPrev();
          return;
       }
       if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
-         opState = TUNE_P; // vai para a tela de ajuste do P(id)
+         gotoNext();
          return;
       }
       if (digitalRead(PIN_BTN_PARACIMA) == HIGH)
@@ -319,11 +348,11 @@ void Tune_Sp()
          delay(200);
       }
     
-      if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
-      {
-         opState = RUN;
-         return;
-      }
+      // if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
+      // {
+      //    opState = RUN;
+      //    return;
+      // }
       lcd.setCursor(0,1);
       lcd.print(Setpoint);
       lcd.print(" ");
@@ -342,10 +371,9 @@ void TuneP()
 {
    lcd.print(F("Ajuste o Kp:"));
 
-   uint8_t buttons = 0;
+   old_estadoBotao = 0;
    while(true)
    {
-      buttons = ReadButtons();
 
       float increment = 1.0;
       if (digitalRead(PIN_BTN_SHIFT) == HIGH)
@@ -354,12 +382,14 @@ void TuneP()
       }
       if (digitalRead(PIN_BTN_ESQUERDA) == HIGH)
       {
-         opState = SETP;
+         gotoPrev();
          return;
       }
       if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
-         opState = TUNE_I;
+         // opState = TUNE_I;
+         Serial.println(" ========= DIR ============ ");
+         gotoNext();
          return;
       }
       if (digitalRead(PIN_BTN_PARACIMA) == HIGH)
@@ -372,11 +402,11 @@ void TuneP()
          Kp -= increment;
          delay(200);
       }
-      if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
-      {
-         opState = RUN;
-         return;
-      }
+      // if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
+      // {
+      //    opState = RUN;
+      //    return;
+      // }
       lcd.setCursor(0,1);
       lcd.print(Kp);
       lcd.print(" ");
@@ -395,10 +425,9 @@ void TuneI()
 {
    lcd.print(F("Ajuste o Ki"));
 
-   uint8_t buttons = 0;
+   old_estadoBotao = 0;
    while(true)
    {
-      buttons = ReadButtons();
 
       float increment = 0.01;
       if (digitalRead(PIN_BTN_SHIFT) == HIGH)
@@ -407,12 +436,14 @@ void TuneI()
       }
       if (digitalRead(PIN_BTN_ESQUERDA) == HIGH)
       {
-         opState = TUNE_P;
+         gotoPrev();
          return;
       }
       if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
-         opState = TUNE_D;
+         // opState = TUNE_D;
+         Serial.println(" ========= DIR ============ ");
+         gotoNext();
          return;
       }
       if (digitalRead(PIN_BTN_PARACIMA) == HIGH)
@@ -425,11 +456,11 @@ void TuneI()
          Ki -= increment;
          delay(200);
       }
-      if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
-      {
-         opState = RUN;
-         return;
-      }
+      // if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
+      // {
+      //    opState = RUN;
+      //    return;
+      // }
       lcd.setCursor(0,1);
       lcd.print(Ki);
       lcd.print(" ");
@@ -448,10 +479,9 @@ void TuneD()
 {
    lcd.print(F("Ajuste o Kd:"));
 
-   uint8_t buttons = 0;
+   old_estadoBotao = 0;
    while(true)
    {
-      buttons = ReadButtons();
       float increment = 0.01;
       if (digitalRead(PIN_BTN_SHIFT) == HIGH)
       {
@@ -459,12 +489,14 @@ void TuneD()
       }
       if (digitalRead(PIN_BTN_ESQUERDA) == HIGH)
       {
-         opState = TUNE_I;
+         gotoPrev();
          return;
       }
       if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
-         opState = RUN;
+         // opState = RUN;
+         Serial.println(" ========= DIR ============ ");
+         gotoNext();
          return;
       }
       if (digitalRead(PIN_BTN_PARACIMA) == HIGH)
@@ -477,11 +509,11 @@ void TuneD()
          Kd -= increment;
          delay(200);
       }
-      if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
-      {
-         opState = RUN;
-         return;
-      }
+      // if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
+      // {
+      //    opState = RUN;
+      //    return;
+      // }
       lcd.setCursor(0,1);
       lcd.print(Kd);
       lcd.print(" ");
@@ -505,10 +537,9 @@ void Run()
    SaveParameters(); // funcão de salvar os parâmetros atuais na EEPROM
    myPID.SetTunings(Kp,Ki,Kd); // estabelece os valores iniciais do PID
 
-   //uint8_t buttons = 0;
+   old_estadoBotao = 0;
    while(true)
    {
-      //buttons = ReadButtons();
       if ((digitalRead(PIN_BTN_SHIFT) == HIGH) 
          && (digitalRead(PIN_BTN_DIREITA) == HIGH) 
          && (abs(Input - Setpoint) < 0.5))  // só inicia o Autotune se a temperatura estiver estável dentro do valor estabelecido pelo usuário
@@ -517,12 +548,14 @@ void Run()
       }
       else if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
-        opState = SETP;
+        // opState = SETP;
+        Serial.println(" ========= DIR ============ ");
+        gotoNext();
         return;
       }
       else if (digitalRead(PIN_BTN_ESQUERDA) == HIGH)
       {
-        opState = OFF;
+        gotoPrev();
         return;
       }
       
@@ -552,12 +585,12 @@ void Run()
       // periodicamente imprime valores pela porta serial em formato CSV
       if (millis() - lastLogTime > logInterval)  
       {
-        Serial.print(Input);
-        Serial.print(",");
-        Serial.println(Output);
+        // Serial.print(Input);
+        // Serial.print(",");
+        // Serial.println(Output);
       }
 
-      delay(100);
+      // delay(100);
    }
 }
 
@@ -654,16 +687,12 @@ void FinishAutoTune()
 // ************************************************
 
 
-int ReadButtons()
+/*int ReadButtons()
 {
-  int buttons = botaoApertado();
-  if (buttons != 0)
-  {
-    lastInput = millis();
-  }
+  int botaoApertado();
   Serial.println(buttons);
   return buttons;
-}
+}*/
 
 int botaoApertado()
 {
@@ -672,6 +701,12 @@ int botaoApertado()
   for (uint8_t i=0; i<5; i++) {
     reply = digitalRead(button_pins[i]);
   }
+
+  if (reply != 0)
+  {
+    lastInput = millis();
+  }
+
   return reply;
 }
 
