@@ -134,8 +134,6 @@ byte arrOperatingState[]=
 
 byte stateIndex = 0;
 
-operatingState opState = OFF;
-
 // ************************************************
 // Variáveis e constantes do sensor
 // Fio de dados do sensor é ligado no pino 2 do Arduino (definido acima)
@@ -216,7 +214,7 @@ void setup()
 // ************************************************
 SIGNAL(TIMER2_OVF_vect) 
 {
-  if (opState == OFF)
+  if (arrOperatingState[stateIndex] == OFF)
   {
     digitalWrite(RelayPin, LOW);  // ter a certeza que o relé está desligado
   }
@@ -350,7 +348,7 @@ void Tune_Sp()
     
       // if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
       // {
-      //    opState = RUN;
+      // arrOperatingState[stateIndex] = RUN;
       //    return;
       // }
       lcd.setCursor(0,1);
@@ -387,7 +385,6 @@ void TuneP()
       }
       if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
-         // opState = TUNE_I;
          Serial.println(" ========= DIR ============ ");
          gotoNext();
          return;
@@ -404,7 +401,7 @@ void TuneP()
       }
       // if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
       // {
-      //    opState = RUN;
+      // stateIndex = 1;
       //    return;
       // }
       lcd.setCursor(0,1);
@@ -441,7 +438,6 @@ void TuneI()
       }
       if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
-         // opState = TUNE_D;
          Serial.println(" ========= DIR ============ ");
          gotoNext();
          return;
@@ -458,7 +454,7 @@ void TuneI()
       }
       // if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
       // {
-      //    opState = RUN;
+      //    stateIndex = 1;
       //    return;
       // }
       lcd.setCursor(0,1);
@@ -494,7 +490,6 @@ void TuneD()
       }
       if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
-         // opState = RUN;
          Serial.println(" ========= DIR ============ ");
          gotoNext();
          return;
@@ -511,7 +506,7 @@ void TuneD()
       }
       // if ((millis() - lastInput) > 3000)  // volta para tela de execucão depois de 3 segundos sem atividade
       // {
-      //    opState = RUN;
+      //    stateIndex = 1;
       //    return;
       // }
       lcd.setCursor(0,1);
@@ -548,8 +543,6 @@ void Run()
       }
       else if (digitalRead(PIN_BTN_DIREITA) == HIGH)
       {
-        // opState = SETP;
-        Serial.println(" ========= DIR ============ ");
         gotoNext();
         return;
       }
@@ -585,12 +578,12 @@ void Run()
       // periodicamente imprime valores pela porta serial em formato CSV
       if (millis() - lastLogTime > logInterval)  
       {
-        // Serial.print(Input);
-        // Serial.print(",");
-        // Serial.println(Output);
+         Serial.print(Input);
+         Serial.print(",");
+         Serial.println(Output);
       }
 
-      // delay(100);
+      delay(100);
    }
 }
 
@@ -686,13 +679,6 @@ void FinishAutoTune()
 // o útlimo botão pressionado
 // ************************************************
 
-
-/*int ReadButtons()
-{
-  int botaoApertado();
-  Serial.println(buttons);
-  return buttons;
-}*/
 
 int botaoApertado()
 {
